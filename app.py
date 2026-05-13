@@ -80,7 +80,7 @@ def graphique():
 
 # ===== INTERFACE =====
 fenetre = tk.Tk()
-fenetre.title("Smart Maintenance Dashboard Trident-Ogx")
+fenetre.title("📊 Smart Maintenance Dashboard Trident-Ogx")
 fenetre.geometry("850x550")
 
 # filtre date

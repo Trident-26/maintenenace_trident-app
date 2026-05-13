@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime
+from streamlit_option_menu import option_menu
 import plotly.express as px
 import plotly.graph_objects as go
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
@@ -500,15 +501,16 @@ if st.session_state["module"] == "home":
     user_label = st.session_state.get("username", "Utilisateur")
     st.markdown(f"<p style='color:#64748b;margin-bottom:2rem;'>Bienvenue, <b style='color:#f97316'>{user_label}</b> — {datetime.now().strftime('%A %d %B %Y, %H:%M')}</p>", unsafe_allow_html=True)
 
-    # ── 5 modules : 3 en haut, 2 en bas ──
+    # ── 6 modules : 3 en haut, 3 en bas ──
     modules_row1 = [
         ("equipements",    "🔧", "Suivi des équipements"),
         ("planning",       "📅", "Planning maintenance"),
         ("direction",      "📊", "Dashboard Direction"),
     ]
     modules_row2 = [
-        ("gestion_equip",   "🗂️", "Gestion équipements"),
+        ("gestion_equip",   "🗂️", "Gestion équipements"), 
         ("suivi_execution", "📈", "Suivi d'exécution"),
+        ("gestion_documentaire", "📁", "Gestion documentaire"),   
     ]
 
     col1, col2, col3 = st.columns(3, gap="large")
@@ -520,8 +522,8 @@ if st.session_state["module"] == "home":
                 st.rerun()
 
     st.markdown("")
-    col4, col5, _ = st.columns(3, gap="large")
-    for col, (mod, icon, label) in zip([col4, col5], modules_row2):
+    col4, col5, col6, = st.columns(3, gap="large")
+    for col, (mod, icon, label) in zip([col4, col5, col6], modules_row2):
         with col:
             st.markdown(f'<div class="module-card"><div class="module-card-icon">{icon}</div><div class="module-card-title">{label}</div></div>', unsafe_allow_html=True)
             if st.button("Accéder →", key=mod):
@@ -769,7 +771,7 @@ if st.session_state["module"] == "equipements":
             # GRAVITÉ
             # ==============================
 
-            # Temps d'arrêt moyen par équipement
+            # --- Temps d'arrêt moyen par équipement ---
             gravite = (
                 df_f.groupby("Equipement")["Arret_h"]
                 .mean()
@@ -782,8 +784,109 @@ if st.session_state["module"] == "equipements":
                 how="left"
             )
 
+            # ==============================
+            # SCORE ARRÊT MACHINE
+            # ==============================
+
+            def score_arret(x):
+
+                x = str(x).strip().lower()
+
+                if x == "Automatique":
+                    return 5
+
+                elif x == "Volontaire":
+                    return 3
+
+                elif x == "Pas d'arrêt":
+                    return 2
+
+                elif x == "N/A":
+                    return 1
+
+                else:
+                    return 1
+
+
+            df_f["Score_arret"] = (
+                df_f["Arrêt de la  machine"]
+                .apply(score_arret)
+            )
+
+            # Score moyen par équipement
+            score_arret_eq = (
+                df_f.groupby("Equipement")["Score_arret"]
+                .mean()
+                .reset_index()
+            )
+
+            equip_stats = equip_stats.merge(
+                score_arret_eq,
+                on="Equipement",
+                how="left"
+            )
+
+            # ==============================
+            # SCORE TYPE INTERVENTION
+            # ==============================
+
+            def score_type(x):
+
+                x = str(x).strip().lower()
+
+                if x == "Urgence":
+                    return 5
+
+                elif x == "Correctif":
+                    return 4
+
+                elif x == "Travaux":
+                    return 3
+
+                elif x == "Survey":
+                    return 2
+
+                elif x == "Inspection":
+                    return 1
+
+                elif x == "Préventif":
+                    return 1
+
+                else:
+                    return 1
+
+
+            df_f["Score_type"] = (
+                df_f["Type d'opération"]
+                .apply(score_type)
+            )
+
+            score_type_eq = (
+                df_f.groupby("Equipement")["Score_type"]
+                .mean()
+                .reset_index()
+            )
+
+            equip_stats = equip_stats.merge(
+                score_type_eq,
+                on="Equipement",
+                how="left"
+            )
+
+            # ==============================
+            # GRAVITÉ GLOBALE
+            # ==============================
+
+            equip_stats["Gravite_calculee"] = (
+                (
+                    equip_stats["Arret_h"].fillna(0)
+                    + equip_stats["Score_arret"].fillna(1)
+                    + equip_stats["Score_type"].fillna(1)
+                ) / 3
+            )
+
             equip_stats["Grav_score"] = score_1_5(
-                equip_stats["Arret_h"]
+                equip_stats["Gravite_calculee"]
             )
 
             # ==============================
@@ -2186,3 +2289,151 @@ if st.session_state["module"] == "suivi_execution":
             st.download_button("📥 Sauvegarder PDF", buf.getvalue(),
                                file_name=f"rapport_execution_{mois_label}_{annee_s}.pdf",
                                mime="application/pdf")
+            
+# ======================================================
+# GESTION DOCUMENTAIRE
+# ======================================================
+
+elif st.session_state["module"] == "gestion_documentaire":
+
+    back_button()
+
+    page_header("📁", "Gestion documentaire")
+
+    st.markdown(
+        """
+        <p style='color:#64748b;'>
+        Centralisation des documents techniques liés aux équipements.
+        </p>
+        """,
+        unsafe_allow_html=True
+    )
+
+    import os
+
+    DOSSIER_DOCS = "documents"
+
+    os.makedirs(DOSSIER_DOCS, exist_ok=True)
+
+    # =========================
+    # BASE ÉQUIPEMENTS
+    # =========================
+
+    db = st.session_state["equipements_db"]
+
+    if db is None or db.empty:
+        st.warning("Aucune base équipements disponible.")
+        st.stop()
+
+    # =========================
+    # SÉLECTION ÉQUIPEMENT
+    # =========================
+
+    equipements = sorted(
+        db["Equipement"]
+        .dropna()
+        .unique()
+    )
+
+    equip = st.selectbox(
+        "Sélectionner un équipement",
+        equipements
+    )
+
+    row_eq = db[db["Equipement"] == equip].iloc[0]
+
+    st.markdown(
+        f"""
+        <div class='section-card'>
+            <b>TAG :</b> {row_eq.get("TAG principal", "—")}<br>
+            <b>Spécialité :</b> {row_eq.get("Spécialité principale", "—")}<br>
+            <b>Criticité :</b> {row_eq.get("Criticité", "—")}<br>
+            <b>Fabricant :</b> {row_eq.get("Fabricant", "—")}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    dossier_equip = os.path.join(
+        DOSSIER_DOCS,
+        equip
+    )
+
+    os.makedirs(dossier_equip, exist_ok=True)
+
+    st.markdown("---")
+
+    # =========================
+    # AJOUT DOCUMENT
+    # =========================
+
+    st.markdown("### Ajouter un document")
+
+    uploaded_file = st.file_uploader(
+        "Choisir un fichier",
+        type=[
+            "pdf",
+            "docx",
+            "xlsx",
+            "png",
+            "jpg",
+            "jpeg"
+        ]
+    )
+
+    if uploaded_file is not None:
+
+        save_path = os.path.join(
+            dossier_equip,
+            uploaded_file.name
+        )
+
+        with open(save_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+
+        st.success(
+            f"Document enregistré : {uploaded_file.name}"
+        )
+
+    st.markdown("---")
+
+    # =========================
+    # DOCUMENTS DISPONIBLES
+    # =========================
+
+    st.markdown("### Documents disponibles")
+
+    fichiers = os.listdir(dossier_equip)
+
+    if fichiers:
+
+        for fichier in fichiers:
+
+            chemin = os.path.join(
+                dossier_equip,
+                fichier
+            )
+
+            col1, col2 = st.columns([5, 1])
+
+            with col1:
+
+                st.markdown(f"📄 {fichier}")
+
+            with col2:
+
+                with open(chemin, "rb") as file:
+
+                    st.download_button(
+                        "⬇",
+                        data=file,
+                        file_name=fichier,
+                        key=fichier,
+                        use_container_width=True
+                    )
+
+    else:
+
+        st.info(
+            "Aucun document disponible pour cet équipement."
+        )
